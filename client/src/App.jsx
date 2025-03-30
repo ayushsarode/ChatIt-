@@ -9,22 +9,49 @@ import {
   Paper,
   Grid,
   Box,
+  Avatar,
+  Divider,
+  Chip,
+  IconButton,
+  InputAdornment,
 } from "@mui/material";
 import { ToastContainer, toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
-import { IoIosChatboxes } from "react-icons/io";
+import { IoIosChatboxes, IoMdSend } from "react-icons/io";
+import { MdGroups } from "react-icons/md";
 
 const App = () => {
-  const socket = useMemo(() => io("http://localhost:3000"), []);
+  const socket = useMemo(() => io("http://localhost:8000"), []);
   const [messages, setMessages] = useState([]);
   const [message, setMessage] = useState("");
   const [room, setRoom] = useState("");
   const [socketId, setSocketId] = useState("");
   const [roomName, setRoomName] = useState("");
+  const [username, setUsername] = useState("");
+  const [isJoined, setIsJoined] = useState(false);
+  const [onlineUsers, setOnlineUsers] = useState(1); // Default to 1 (self)
 
-  const handleSumbit = (e) => {
+  const handleSubmit = (e) => {
     e.preventDefault();
-    socket.emit("message", { message, room });
+    if (!message.trim()) return;
+    if (!room) {
+      toast.error("Please join a room first", {
+        position: "top-right",
+        autoClose: 1500,
+      });
+      return;
+    }
+    
+    const newMessage = {
+      message,
+      room,
+      sender: username || socketId,
+      senderId: socketId,
+      timestamp: Date.now(),
+    };
+    
+    socket.emit("message", newMessage);
+    setMessages((prevMessages) => [...prevMessages, { ...newMessage, isOwnMessage: true }]);
     setMessage("");
   };
 
@@ -35,27 +62,32 @@ const App = () => {
       toast.error("Room name cannot be empty", {
         position: "top-right",
         autoClose: 1500,
-        hideProgressBar: false,
-        closeOnClick: true,
-        pauseOnHover: true,
-        draggable: true,
-        progress: undefined,
       });
       return;
     }
 
-    socket.emit("join-room", roomName);
+    const displayName = username.trim() || `User-${socketId.slice(0, 4)}`;
+    setUsername(displayName);
+    
+    socket.emit("join-room", { room: roomName, username: displayName });
     setRoom(roomName);
     setRoomName("");
+    setIsJoined(true);
+    
     toast.success(`Joined room: ${roomName}`, {
       position: "top-right",
       autoClose: 1500,
-      hideProgressBar: false,
-      closeOnClick: true,
-      pauseOnHover: true,
-      draggable: true,
-      progress: undefined,
     });
+    
+    // Add system message
+    setMessages((prevMessages) => [
+      ...prevMessages,
+      {
+        message: `You joined the room: ${roomName}`,
+        timestamp: Date.now(),
+        isSystem: true,
+      },
+    ]);
   };
 
   useEffect(() => {
@@ -63,8 +95,32 @@ const App = () => {
       setSocketId(socket.id);
     });
 
-    socket.on("recive-message", (data) => {
-      setMessages((messages) => [...messages, data]);
+    socket.on("receive-message", (data) => {
+      setMessages((prevMessages) => [...prevMessages, { ...data, isOwnMessage: false }]);
+    });
+    
+    socket.on("user-joined", ({ username, count }) => {
+      setOnlineUsers(count);
+      setMessages((prevMessages) => [
+        ...prevMessages,
+        {
+          message: `${username} joined the chat`,
+          timestamp: Date.now(),
+          isSystem: true,
+        },
+      ]);
+    });
+    
+    socket.on("user-left", ({ username, count }) => {
+      setOnlineUsers(count);
+      setMessages((prevMessages) => [
+        ...prevMessages,
+        {
+          message: `${username} left the chat`,
+          timestamp: Date.now(),
+          isSystem: true,
+        },
+      ]);
     });
 
     return () => {
@@ -75,7 +131,7 @@ const App = () => {
   // Helper function to format the timestamp
   const formatTimestamp = (timestamp) => {
     const date = new Date(timestamp);
-    return `${date.getHours()}:${date.getMinutes()}`;
+    return `${date.getHours()}:${date.getMinutes().toString().padStart(2, '0')}`;
   };
 
   return (
@@ -86,175 +142,354 @@ const App = () => {
         flexDirection: "column",
         justifyContent: "center",
         alignItems: "center",
-        minHeight: "90vh",
+        minHeight: "100vh",
+        py: 4,
+        backgroundColor: "#f5f5f5",
       }}
     >
-      <Typography
-        variant="h2"
-        component="div"
-        gutterBottom
+      <Paper
+        elevation={3}
         sx={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontSize: "50px",
-          height: "100%",
+          width: "100%",
+          borderRadius: "16px",
+          overflow: "hidden",
         }}
       >
-        ChatIt! <IoIosChatboxes style={{ marginLeft: "10px" }} />
-      </Typography>
-      <ToastContainer />
-      <Grid container spacing={4}>
-        {/* Left Column - Form */}
-        <Grid item xs={12} md={4}>
-          <Paper
-            elevation={3}
+        <Box
+          sx={{
+            backgroundColor: "#3f51b5",
+            color: "white",
+            p: 2,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          <Typography
+            variant="h4"
+            component="div"
             sx={{
-              p: 4,
-              height: "70vh",
               display: "flex",
-              flexDirection: "column",
-              justifyContent: "center",
               alignItems: "center",
-              width: "100%", // Ensure full width for Paper
-              maxWidth: "600px", // Max width constraint
-              mx: "auto", // Centering
+              fontWeight: "bold",
             }}
           >
-            <Typography variant="h4" component="div" gutterBottom>
-              Join & Chat
-            </Typography>
-
-            <Typography variant="body1" color="textSecondary" gutterBottom>
-              Connected with ID: {socketId}
-            </Typography>
-
-            {!room && (
-              <form
-                onSubmit={joinRoomHandler}
-                style={{ marginBottom: "20px", width: "90%" }} // Ensure form is full width
-              >
-                <Box sx={{ mb: 2, width: "100%" }}>
-                  <TextField
-                    fullWidth
-                    value={roomName}
-                    onChange={(e) => setRoomName(e.target.value)}
-                    label="Enter Room Name"
-                    variant="outlined"
-                    sx={{ width: "100%" }}
-                  />
-                </Box>
-                <Button
-                  variant="contained"
-                  type="submit"
-                  color="primary"
-                  fullWidth
-                  sx={{
-                    py: 1.5,
-                    background:
-                      "linear-gradient(45deg, #FE6B8B 30%, #FF8E53 90%)",
-                    color: "white",
-                    "&:hover": {
-                      background:
-                        "linear-gradient(45deg, #FF8E53 30%, #FE6B8B 90%)",
-                    },
-                    borderRadius: "50px",
-                    width: "100%",
+            ChatIt! <IoIosChatboxes style={{ marginLeft: "10px" }} />
+          </Typography>
+          
+          {room && (
+            <Chip 
+              icon={<MdGroups />} 
+              label={`${onlineUsers} online in ${room}`} 
+              variant="outlined" 
+              sx={{ 
+                color: "white", 
+                borderColor: "rgba(255,255,255,0.5)",
+                "& .MuiChip-icon": { color: "white" }
+              }} 
+            />
+          )}
+        </Box>
+        <ToastContainer />
+        
+        <Grid container>
+          {/* Left Column - Chat Messages */}
+          <Grid item xs={12} md={8} sx={{ borderRight: "1px solid #e0e0e0" }}>
+          <Box 
+    sx={{ 
+      height: "60vh", 
+      overflowY: "auto",
+      p: 3,
+      backgroundColor: "#f9f9f9",
+      display: "flex",
+      flexDirection: "column",
+    }}
+    id="messageContainer"
+  >
+    {messages.length === 0 && !isJoined ? (
+      <Box 
+        sx={{ 
+          display: "flex", 
+          flexDirection: "column", 
+          alignItems: "center", 
+          justifyContent: "center",
+          height: "100%",
+          opacity: 0.7
+        }}
+      >
+        <IoIosChatboxes size={100} color="#3f51b5" />
+        <Typography variant="h6" color="textSecondary" sx={{ mt: 2 }}>
+          Join a room to start chatting
+        </Typography>
+      </Box>
+    ) : messages.length === 0 ? (
+      <Box 
+        sx={{ 
+          display: "flex", 
+          flexDirection: "column", 
+          alignItems: "center", 
+          justifyContent: "center",
+          height: "100%",
+          opacity: 0.7
+        }}
+      >
+        <IoIosChatboxes size={100} color="#3f51b5" />
+        <Typography variant="h6" color="textSecondary" sx={{ mt: 2 }}>
+          No messages yet. Start the conversation!
+        </Typography>
+      </Box>
+    ) : (
+      messages.map((msg, i) => (
+        <Box
+          key={i}
+          sx={{
+            display: "flex",
+            width: "100%",
+            justifyContent: msg.isOwnMessage ? "flex-end" : msg.isSystem ? "center" : "flex-start",
+            mb: 2,
+          }}
+        >
+          {msg.isSystem ? (
+            <Chip
+              label={msg.message}
+              variant="outlined"
+              size="small"
+              sx={{ 
+                backgroundColor: "rgba(0,0,0,0.05)",
+                my: 1,
+                color: "text.secondary"
+              }}
+            />
+          ) : (
+            <Box sx={{ maxWidth: "70%", position: "relative" }}>
+              {!msg.isOwnMessage && (
+                <Typography 
+                  variant="caption" 
+                  sx={{ 
+                    position: "absolute", 
+                    top: -18, 
+                    left: 8, 
+                    color: "text.secondary",
+                    fontWeight: "medium"
                   }}
                 >
-                  Join Room
-                </Button>
-              </form>
-            )}
-
-            <form onSubmit={handleSumbit} style={{ width: "90%" }}>
-              <Stack spacing={2} sx={{ width: "100%" }}>
+                  {msg.sender || "Anonymous"}
+                </Typography>
+              )}
+              
+              <Box sx={{ display: "flex", alignItems: "flex-end" }}>
+                {!msg.isOwnMessage && (
+                  <Avatar
+                    sx={{
+                      bgcolor: stringToColor(msg.sender || "Anonymous"),
+                      width: 36,
+                      height: 36,
+                      mr: 1,
+                      fontSize: "0.875rem"
+                    }}
+                  >
+                    {(msg.sender || "A")[0].toUpperCase()}
+                  </Avatar>
+                )}
+                
+                <Paper
+                  elevation={1}
+                  sx={{
+                    p: 2,
+                    borderRadius: "16px",
+                    borderTopLeftRadius: msg.isOwnMessage ? "16px" : "4px",
+                    borderTopRightRadius: msg.isOwnMessage ? "4px" : "16px",
+                    backgroundColor: msg.isOwnMessage ? "#3f51b5" : "white",
+                    color: msg.isOwnMessage ? "white" : "black",
+                    border: msg.isOwnMessage ? "none" : "1px solid #e0e0e0",
+                  }}
+                >
+                  <Typography variant="body1" sx={{ wordBreak: "break-word" }}>
+                    {msg.message}
+                  </Typography>
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      display: "block",
+                      textAlign: "right",
+                      mt: 0.5,
+                      opacity: 0.7,
+                    }}
+                  >
+                    {formatTimestamp(msg.timestamp)}
+                  </Typography>
+                </Paper>
+              </Box>
+            </Box>
+          )}
+        </Box>
+      ))
+    )}
+  </Box>
+            
+            <Divider />
+            
+            <Box sx={{ p: 2 }}>
+              <form onSubmit={handleSubmit}>
                 <TextField
                   fullWidth
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}
-                  label="Enter Message"
+                  placeholder={room ? "Type your message..." : "Join a room to chat"}
                   variant="outlined"
-                  sx={{ width: "100%" }}
-                />
-                <TextField
-                  fullWidth
-                  value={room}
-                  onChange={(e) => setRoom(e.target.value)}
-                  label="Room Name"
-                  variant="outlined"
-                  disabled
-                  sx={{ width: "100%" }}
-                />
-                <Button
-                  variant="contained"
-                  type="submit"
-                  color="primary"
-                  fullWidth
-                  sx={{
-                    py: 1.5,
-                    background:
-                      "linear-gradient(45deg, #FE6B8B 30%, #FF8E53 90%)",
-                    color: "white",
-                    "&:hover": {
-                      background:
-                        "linear-gradient(45deg, #FF8E53 30%, #FE6B8B 90%)",
-                    },
-                    borderRadius: "50px",
-                    width: "100%",
+                  disabled={!room}
+                  autoComplete="off"
+                  InputProps={{
+                    endAdornment: (
+                      <InputAdornment position="end">
+                        <IconButton 
+                          type="submit" 
+                          color="primary" 
+                          disabled={!room || !message.trim()}
+                        >
+                          <IoMdSend />
+                        </IconButton>
+                      </InputAdornment>
+                    ),
+                    sx: {
+                      borderRadius: "24px",
+                    }
                   }}
-                >
-                  Send Message
-                </Button>
-              </Stack>
-            </form>
-          </Paper>
-        </Grid>
-
-        {/* Right Column - Chat Messages */}
-        <Grid item xs={12} md={8}>
-          <Paper elevation={3} sx={{ p: 4, height: "520px", overflowY: "auto" }}>
-            <Typography variant="h5" component="div" gutterBottom>
-              Chat Room: {room ? room : "No Room Joined"}
-            </Typography>
-
-            <Stack spacing={2} sx={{ mt: 2, alignItems: "flex-start" }}>
-              {messages.map((m, i) => (
-                <Paper
-                  key={i}
-                  elevation={2}
-                  sx={{
-                    display: "inline-block", // Ensure Paper wraps only the content
-                    maxWidth: "80%", // Optional: limit max width for long messages
-                    p: 0.5,
-                    background: "skyblue",
-                    borderRadius: "50px",
-                    color: "white",
-                    px: 2,
-                    wordBreak: "break-word", // Ensure long words wrap within the Paper
-                  }}
-                >
-                  <Typography
-                    variant="body1"
-                    sx={{ fontSize: "1.2rem", mt: 0.5 }}
-                    gutterBottom
-                  >
-                    {m.message}
-                    <Typography
-                      variant="caption"
-                      sx={{ display: "block", fontSize: "0.8rem", color: "lightgray" }}
+                />
+              </form>
+            </Box>
+          </Grid>
+          
+          {/* Right Column - Join Room */}
+          <Grid item xs={12} md={4}>
+            <Box 
+              sx={{ 
+                p: 3, 
+                height: "60vh",
+                display: "flex",
+                flexDirection: "column"
+              }}
+            >
+              <Typography variant="h5" gutterBottom>
+                {isJoined ? "Room Information" : "Join a Room"}
+              </Typography>
+              
+              <Box sx={{ mt: 2 }}>
+                <Typography variant="body2" color="textSecondary" gutterBottom>
+                  Your ID: {socketId}
+                </Typography>
+                
+                {isJoined ? (
+                  <Box sx={{ mt: 3 }}>
+                    <Paper 
+                      elevation={0} 
+                      sx={{ 
+                        p: 3, 
+                        backgroundColor: "rgba(63, 81, 181, 0.05)",
+                        borderRadius: "12px",
+                        mb: 3
+                      }}
                     >
-                      {formatTimestamp(m.timestamp)}
-                    </Typography>
-                  </Typography>
-                </Paper>
-              ))}
-            </Stack>
-          </Paper>
+                      <Typography variant="h6" gutterBottom>
+                        Currently in
+                      </Typography>
+                      <Typography variant="h4" sx={{ fontWeight: "bold", color: "#3f51b5" }}>
+                        {room}
+                      </Typography>
+                      <Typography variant="body2" sx={{ mt: 1, color: "text.secondary" }}>
+                        Chatting as: <strong>{username || socketId}</strong>
+                      </Typography>
+                    </Paper>
+                    
+                    <Button
+                      variant="outlined"
+                      color="primary"
+                      fullWidth
+                      onClick={() => {
+                        setRoom("");
+                        setIsJoined(false);
+                        setMessages([]);
+                        socket.emit("leave-room", { room, username: username || socketId });
+                        toast.info(`Left room: ${room}`, {
+                          position: "top-right",
+                          autoClose: 1500,
+                        });
+                      }}
+                      sx={{
+                        py: 1.5,
+                        borderRadius: "8px",
+                      }}
+                    >
+                      Leave Room
+                    </Button>
+                  </Box>
+                ) : (
+                  <form onSubmit={joinRoomHandler} style={{ marginTop: "16px" }}>
+                    <TextField
+                      fullWidth
+                      value={username}
+                      onChange={(e) => setUsername(e.target.value)}
+                      label="Your Display Name (optional)"
+                      variant="outlined"
+                      sx={{ mb: 2 }}
+                    />
+                    
+                    <TextField
+                      fullWidth
+                      value={roomName}
+                      onChange={(e) => setRoomName(e.target.value)}
+                      label="Room Name"
+                      variant="outlined"
+                      required
+                      sx={{ mb: 2 }}
+                    />
+                    
+                    <Button
+                      variant="contained"
+                      type="submit"
+                      color="primary"
+                      fullWidth
+                      sx={{
+                        py: 1.5,
+                        borderRadius: "8px",
+                        background: "#3f51b5",
+                        "&:hover": {
+                          background: "#303f9f",
+                        },
+                      }}
+                    >
+                      Join Room
+                    </Button>
+                  </form>
+                )}
+              </Box>
+              
+              <Box sx={{ mt: "auto", pt: 4 }}>
+                <Divider sx={{ mb: 2 }} />
+                <Typography variant="body2" color="textSecondary" align="center">
+                  ChatIt! - Real-time messaging platform
+                </Typography>
+              </Box>
+            </Box>
+          </Grid>
         </Grid>
-      </Grid>
+      </Paper>
     </Container>
   );
 };
+
+// Utility function to generate a color from a string
+function stringToColor(string) {
+  let hash = 0;
+  for (let i = 0; i < string.length; i++) {
+    hash = string.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  let color = '#';
+  for (let i = 0; i < 3; i++) {
+    const value = (hash >> (i * 8)) & 0xff;
+    color += `00${value.toString(16)}`.slice(-2);
+  }
+  return color;
+}
 
 export default App;
